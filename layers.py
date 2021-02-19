@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+from torch.nn.parameter import Parameter
 import torch.nn.functional as F
 from torch.nn.modules.module import Module
 class StructuralSelfAttention(Module):
@@ -91,3 +92,49 @@ class GATLayer(nn.Module):
 
 
 
+class TemporalAttention(Module):
+    def __init__(self, input_dim, output_dim, n_heads, num_snapshots, dropout, alpha):
+        super(TemporalAttention,self).__init__()
+        self.num_snapshots = num_snapshots
+        self.input_dim = input_dim
+        self.n_heads = n_heads
+        self.position_embeddings = nn.Embedding(num_snapshots, input_dim)
+
+        self.q_embedding_weights = Parameter(torch.FloatTensor(input_dim, input_dim), requires_grad=True)
+        nn.init.xavier_uniform_(self.q_embedding_weights)
+        self.k_embedding_weights = Parameter(torch.FloatTensor(input_dim, input_dim), requires_grad=True)
+        nn.init.xavier_uniform_(self.k_embedding_weights)
+        self.v_embedding_weights = Parameter(torch.FloatTensor(input_dim, input_dim), requires_grad=True)
+        nn.init.xavier_uniform_(self.v_embedding_weights)
+        
+    def forward(self, input):
+        position_inputs = torch.unsqueeze(torch.range(0, self.num_snapshots-1, dtype=torch.int64),0).repeat((input.shape[0], 1))
+        temporal_inputs = input + self.position_embeddings(position_inputs)
+
+        q = torch.tensordot(temporal_inputs, self.q_embedding_weights, dims=[[2],[0]])
+        k = torch.tensordot(temporal_inputs, self.k_embedding_weights, dims=[[2],[0]])
+        v = torch.tensordot(temporal_inputs, self.v_embedding_weights, dims=[[2],[0]])
+
+        q_ = torch.cat(torch.chunk(q, self.n_heads, dim=2), dim=0)
+        k_ = torch.cat(torch.chunk(k, self.n_heads, dim=2), dim=0)
+        v_ = torch.cat(torch.chunk(v, self.n_heads, dim=2), dim=0)
+
+        outputs = torch.matmul(q_, k_.permute(0,2,1))
+        outputs = outputs / (self.num_snapshots ** 0.5)
+        
+        diag_val = torch.ones_like(outputs[0,:,:])
+        tril = torch.tril(diag_val, diagonal=0)
+        masks = torch.unsqueeze(tril,0).repeat((outputs.shape[0], 1, 1))
+        padding = torch.ones_like(masks) * (-2 ** 32 + 1)
+
+        outputs = torch.where(masks > 0, padding, outputs)
+        outputs = F.softmax(outputs)
+
+        outputs = torch.matmul(outputs, v_)
+
+        split_outputs = torch.chunk(outputs, self.n_heads, dim=0)
+        outputs = torch.cat(split_outputs, dim=-1)
+
+        test = torch.reshape(outputs, (-1, self.num_snapshots, self.input_dim))
+
+        return outputs

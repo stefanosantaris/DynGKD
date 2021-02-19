@@ -1,49 +1,41 @@
 import numpy as np
 import scipy.sparse as sp
 import networkx as nx
-import dill
+import pickle as pkl
 from utils.utilities import run_random_walks_n2v
 
 
-def load_graphs(dataset_str):
-    graphs = np.load("data/{}/{}".format(dataset_str, "graphs.npz"), allow_pickle=True)['graph']
+def load_graphs(dataset_str, start_id, stop_id):
+    # graphs = []
+    # for i in range(start_id, stop_id):
+    #     graphs.append(nx.read_gexf)
+    graphs = [nx.read_gpickle("data/{}/graph_{}.npz".format(dataset_str, i)) for i in range(start_id, stop_id)]
+    # graphs = np.load("data/{}/{}".format(dataset_str, "graphs.npz"), allow_pickle=True)['graph']
     print("Loaded {} graphs ".format(len(graphs)))
     adj_matrices = map(lambda x: nx.adjacency_matrix(x), graphs)
     return graphs, list(adj_matrices)
 
 
-def get_context_pairs(dataset, graphs, num_time_steps):
-    """ Load/generate context pairs for each snapshot through random walk sampling."""
-    load_path = "data/{}/train_pairs_n2v.pkl".format(dataset)
-    try:
-        context_pairs_train = dill.load(open(load_path, 'rb'))
-        print("Loaded context pairs from pkl file directly")
-    except (IOError, EOFError):
-        print("Computing training pairs ...")
-        context_pairs_train = []
-        for i in range(0, num_time_steps):
-            context_pairs_train.append(run_random_walks_n2v(graphs[i]))
-        dill.dump(context_pairs_train, open(load_path, 'wb'))
-        print ("Saved pairs")
-
-    return context_pairs_train
+def get_context_pairs(dataset, start_id, stop_id):
+    context_pair_train = [pkl.load(open("data/{}/pairs_{}.pkl".format(dataset, i), 'rb')) for i in range(start_id, stop_id)]
+    return context_pair_train
 
 
-def get_evaluation_data(adjs, num_time_steps, dataset):
+def get_evaluation_data(adjs):
     """ Load train/val/test examples to evaluate link prediction performance"""
-    eval_idx = num_time_steps - 2
-    eval_path = "data/{}/eval_{}.npz".format(dataset, str(eval_idx))
-    try:
-        train_edges, train_edges_false, val_edges, val_edges_false, test_edges, test_edges_false = \
-            np.load(eval_path, encoding='bytes', allow_pickle=True)['data']
-        print("Loaded eval data")
-    except IOError:
-        next_adjs = adjs[eval_idx + 1]
-        print("Generating and saving eval data ....")
-        train_edges, train_edges_false, val_edges, val_edges_false, test_edges, test_edges_false = \
-            create_data_splits(adjs[eval_idx], next_adjs, val_mask_fraction=0.2, test_mask_fraction=0.6)
-        np.savez(eval_path, data=np.array([train_edges, train_edges_false, val_edges, val_edges_false,
-                                           test_edges, test_edges_false]))
+    # eval_idx = -2
+    # eval_path = "data/{}/eval_{}.npz".format(dataset, str(eval_idx))
+    # try:
+    #     train_edges, train_edges_false, val_edges, val_edges_false, test_edges, test_edges_false = \
+    #         np.load(eval_path, encoding='bytes', allow_pickle=True)['data']
+    #     print("Loaded eval data")
+    # except IOError:
+    next_adjs = adjs[-1]
+    print("Generating and saving eval data ....")
+    train_edges, train_edges_false, val_edges, val_edges_false, test_edges, test_edges_false = \
+            create_data_splits(adjs[-2], next_adjs, val_mask_fraction=0.2, test_mask_fraction=0.6)
+    # np.savez(eval_path, data=np.array([train_edges, train_edges_false, val_edges, val_edges_false,
+                                        #    test_edges, test_edges_false]))
 
     return train_edges, train_edges_false, val_edges, val_edges_false, test_edges, test_edges_false
 
