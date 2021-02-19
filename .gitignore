@@ -1,0 +1,8 @@
+.metals/
+.vscode
+__pycache__/
+data/ml-10m_new/
+raw_data/ia-movielens-user2tags-10m
+raw_data/Enron_new
+raw_data/yelp
+raw_data/Yelp_old
