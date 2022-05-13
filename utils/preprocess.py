@@ -2,18 +2,39 @@ import numpy as np
 import scipy.sparse as sp
 import networkx as nx
 import pickle as pkl
+import random
 from utils.utilities import run_random_walks_n2v
 
 
-def load_graphs(dataset_str, start_id, stop_id):
+def load_graphs(dataset_str, start_id, stop_id, one_file = False, edge_list=False):
     # graphs = []
     # for i in range(start_id, stop_id):
     #     graphs.append(nx.read_gexf)
-    graphs = [nx.read_gpickle("data/{}/graph_{}.npz".format(dataset_str, i)) for i in range(start_id, stop_id)]
+    if one_file:
+        graphs = np.load("data/{}/{}".format(dataset_str, "graphs.npz"), allow_pickle=True, encoding='latin1')['graph']
+        graphs = [nx_graph(g) for g in graphs][start_id:stop_id]
+    elif edge_list:
+        graphs = [nx.read_weighted_edgelist(f'data/{dataset_str}/edges{i}.csv', delimiter=',', nodetype=int,encoding='utf-8') for i in np.arange(start_id, stop_id)]
+    else:
+        graphs = [nx.read_gpickle("data/{}/graph_{}.npz".format(dataset_str, i)) for i in range(start_id, stop_id)]
+        graphs = [nx_graph(g) for g in graphs]
     # graphs = np.load("data/{}/{}".format(dataset_str, "graphs.npz"), allow_pickle=True)['graph']
     print("Loaded {} graphs ".format(len(graphs)))
-    adj_matrices = map(lambda x: nx.adjacency_matrix(x), graphs)
-    return graphs, list(adj_matrices)
+    adj_matrices = [*map(lambda x: nx.adjacency_matrix(x), graphs)]
+    return graphs, adj_matrices
+
+def nx_graph(graph, one_file=True):
+        nx_G = nx.Graph()
+        if one_file:
+            nx_G.add_nodes_from(list(graph.node))
+            for src in graph.edge:
+                for dst in graph.edge[src]:
+                    nx_G.add_edge(src, dst, weight=1)
+            # nx_G.add_weighted_edges_from([(edge[0],edge[1],edge[2]['weight']) for edge in graph.edge])
+        else:
+            nx_G.add_nodes_from(list(graph.nodes()))
+            nx_G.add_weighted_edges_from([(edge[0],edge[1],edge[2]['weight']) for edge in graph.edges(data=True)])
+        return nx_G
 
 
 def get_context_pairs(dataset, start_id, stop_id):
@@ -21,24 +42,72 @@ def get_context_pairs(dataset, start_id, stop_id):
     return context_pair_train
 
 
-def get_evaluation_data(adjs):
+def get_evaluation_data(graphs, num_nodes, train_perc = 0.6, val_perc = 0.2, ns = 1):
     """ Load train/val/test examples to evaluate link prediction performance"""
-    # eval_idx = -2
-    # eval_path = "data/{}/eval_{}.npz".format(dataset, str(eval_idx))
-    # try:
-    #     train_edges, train_edges_false, val_edges, val_edges_false, test_edges, test_edges_false = \
-    #         np.load(eval_path, encoding='bytes', allow_pickle=True)['data']
-    #     print("Loaded eval data")
-    # except IOError:
-    next_adjs = adjs[-1]
+
+    next_graph = graphs[-1]
+    graph = graphs[-2]
+
     print("Generating and saving eval data ....")
-    train_edges, train_edges_false, val_edges, val_edges_false, test_edges, test_edges_false = \
-            create_data_splits(adjs[-2], next_adjs, val_mask_fraction=0.2, test_mask_fraction=0.6)
-    # np.savez(eval_path, data=np.array([train_edges, train_edges_false, val_edges, val_edges_false,
-                                        #    test_edges, test_edges_false]))
+    train_graph_edges = set(graph.edges())
+    next_graph_edges = set(next_graph.edges())
+
+    all_edges = train_graph_edges.union(next_graph_edges)
+
+    new_edges_list = list(next_graph_edges - train_graph_edges)
+    random.shuffle(new_edges_list)
+
+    train_edges_num = int(len(new_edges_list) * train_perc)
+    train_edges = new_edges_list[:train_edges_num]
+    train_edges_false = generate_ns(train_edges, all_edges, num_nodes, ns)
+
+
+    val_edges_num = int(len(new_edges_list) * (train_perc + val_perc))
+    val_edges = new_edges_list[train_edges_num+1:val_edges_num]
+    val_edges_false = generate_ns(val_edges, all_edges, num_nodes, ns)
+
+    test_edges = new_edges_list[val_edges_num + 1:]
+    test_edges_false = generate_ns(test_edges, all_edges, num_nodes, ns)
+
+    # train_edges_ns = generate_ns(list(train_graph_edges), all_edges, self.num_nodes, ns)
+    train_edges = [next_graph[src][dst]['weight'] for (src,dst) in train_edges]
+    val_edges = [next_graph[src][dst]['weight'] for (src,dst) in val_edges]
+    test_edges = [next_graph[src][dst]['weight'] for (src,dst) in test_edges]
+
+
+    
+    # train_edges_tuples = [(edge[0],edge[1],edge[2]['weight']) for edge in graph.edges(data=True)]
+
+    # train_adj = generate_adjacency_matrix(train_edges_tuples, self.num_nodes)
+
+    # train_adj_norm = normalize_adj(train_adj)
+
+    # train_edges_with_ns = train_edges_tuples
+    # train_edges_with_ns.extend(train_edges_ns)
+
+    # val_edges_with_ns = [(src, dst, next_graph[src][dst]['weight']) for (src,dst) in val_graph_edges]
+    # val_edges_with_ns.extend(val_graph_edges_ns)
+
+    # test_edges_with_ns = [(src, dst, next_graph[src][dst]['weight']) for (src, dst) in test_graph_edges]
+    # test_edges_with_ns.extend(test_graph_edges_ns)
+
+    return train_edges, train_edges_false, val_edges, val_edges_false, test_edges, test_edges_false
+    # train_edges, train_edges_false, val_edges, val_edges_false, test_edges, test_edges_false = \
+    #         create_data_splits(graphs[-2], next_adjs, val_mask_fraction=0.2, test_mask_fraction=0.6)
+
 
     return train_edges, train_edges_false, val_edges, val_edges_false, test_edges, test_edges_false
 
+def generate_ns(positive_edges, edges_no_weights, num_nodes, ns=1):
+    ns_dict = dict()
+    while len(ns_dict) < len(positive_edges) * ns:
+        src = random.randint(0, num_nodes-1)
+        dst = random.randint(0, num_nodes-1)
+        if src!=dst \
+                and (src,dst) not in ns_dict \
+                and (src,dst) not in edges_no_weights:
+                ns_dict[(src,dst)] = 0
+    return [(src,dst,0) for (src,dst),value in ns_dict.items()]
 
 def sparse_to_tuple(sparse_mx):
     """Convert scipy sparse matrix to tuple representation (for tf feed dict)."""
