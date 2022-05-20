@@ -108,7 +108,7 @@ class TemporalAttention(Module):
         nn.init.xavier_uniform_(self.v_embedding_weights)
         
     def forward(self, input):
-        position_inputs = torch.unsqueeze(torch.range(0, self.num_snapshots-1, dtype=torch.int64),0).repeat((input.shape[0], 1))
+        position_inputs = torch.unsqueeze(torch.arange(0, self.num_snapshots, dtype=torch.int64),0).repeat((input.shape[0], 1))
         temporal_inputs = input + self.position_embeddings(position_inputs)
 
         q = torch.tensordot(temporal_inputs, self.q_embedding_weights, dims=[[2],[0]])
@@ -128,7 +128,7 @@ class TemporalAttention(Module):
         padding = torch.ones_like(masks) * (-2 ** 32 + 1)
 
         outputs = torch.where(masks > 0, padding, outputs)
-        outputs = F.softmax(outputs)
+        outputs = F.softmax(outputs, dim=0)
 
         outputs = torch.matmul(outputs, v_)
 
